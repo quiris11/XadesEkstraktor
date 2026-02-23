@@ -1,0 +1,838 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; object-src 'none';">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ekstraktor załączników z plików podpisanych otaczającym XAdES</title>
+  <style>
+    :root {
+      --bg: #f4f7f2;
+      --panel: #ffffff;
+      --ink: #1e2a1f;
+      --muted: #5a6b5a;
+      --accent: #2f7a48;
+      --accent-2: #c5e0cd;
+      --border: #d5e3d5;
+      --warn: #8f5f00;
+      --ok: #1f6e3a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Avenir Next", "Segoe UI", Tahoma, Arial, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 10% 10%, #e6f2e8 0%, transparent 45%),
+        radial-gradient(circle at 90% 85%, #e9f5ee 0%, transparent 40%),
+        var(--bg);
+      min-height: 100vh;
+    }
+    .wrap {
+      max-width: 980px;
+      margin: 32px auto;
+      padding: 0 16px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(25, 60, 35, 0.08);
+      overflow: hidden;
+    }
+    .head {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(135deg, #f0f8f3 0%, #ffffff 75%);
+    }
+    h1 {
+      margin: 0 0 6px;
+      font-size: 1.35rem;
+      letter-spacing: 0.2px;
+    }
+    .sub {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+    .body {
+      padding: 22px 24px;
+      display: grid;
+      gap: 14px;
+    }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+    input[type="file"] {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px;
+      background: #fff;
+      max-width: 100%;
+    }
+    button {
+      border: 1px solid #26663d;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .hint {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .status {
+      border: 1px dashed var(--border);
+      background: #fbfefb;
+      border-radius: 10px;
+      padding: 10px;
+      font-size: 0.92rem;
+      white-space: pre-wrap;
+    }
+    .results {
+      margin-top: 4px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .results table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.92rem;
+    }
+    .results th, .results td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .results tr:last-child td { border-bottom: 0; }
+    .pill {
+      display: inline-block;
+      border: 1px solid var(--accent-2);
+      background: #f3fbf6;
+      color: var(--ok);
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+    .warn { color: var(--warn); }
+    .small { font-size: 0.82rem; color: var(--muted); }
+    .footer {
+      padding: 12px 24px 18px;
+      color: var(--muted);
+      font-size: 0.83rem;
+      border-top: 1px solid var(--border);
+      background: #fcfffc;
+    }
+    .warn-banner {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      background: #fff8e6;
+      border: 1px solid #f0c040;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 0.88rem;
+      color: #7a5000;
+      margin: 0;
+    }
+    .warn-banner::before { content: "⚠️"; flex-shrink: 0; }
+    @media (max-width: 640px) {
+      .head, .body, .footer { padding-left: 14px; padding-right: 14px; }
+      h1 { font-size: 1.1rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="head">
+        <h1>Ekstraktor załączników z plików podpisanych otaczającym XAdES</h1>
+        <p class="sub">Narzędzie działa w przeglądarce i wyodrębnia podpisane dane z pliku XAdES (XML).</p>
+      </div>
+
+      <div class="body">
+        <div class="row">
+          <input id="fileInput" type="file" accept=".xml,.xades,text/xml,application/xml">
+          <button id="extractBtn" disabled>Wyodrębnij</button>
+          <button id="downloadAllBtn" disabled>Pobierz wszystko</button>
+        </div>
+        <div class="warn-banner">
+          Nie otwieraj wyodrębnionych plików z niezaufanych źródeł &mdash; mogą zawierać złośliwy kod (.html, .svg, .js, .exe, .wasm).
+        </div>
+        <div class="hint">
+          Wybierz plik XAdES (XML). Wyodrębnione pliki są trzymane w pamięci i pobierane lokalnie.
+        </div>
+        <div id="status" class="status">Wybierz plik, aby rozpocząć.</div>
+        <div id="results" class="results" hidden></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const NS_DS = "http://www.w3.org/2000/09/xmldsig#";
+    const XADES_NS_LIST = [
+      "http://uri.etsi.org/01903/v1.3.2#",
+      "http://uri.etsi.org/01903/v1.4.1#",
+      "http://uri.etsi.org/01903/v1.1.1#"
+    ];
+
+    const MIME_TO_EXT = {
+      "application/pdf": ".pdf",
+      "application/msword": ".doc",
+      "application/vnd.ms-excel": ".xls",
+      "application/vnd.ms-powerpoint": ".ppt",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+      "application/vnd.oasis.opendocument.text": ".odt",
+      "application/vnd.oasis.opendocument.spreadsheet": ".ods",
+      "application/vnd.oasis.opendocument.presentation": ".odp",
+      "application/xml": ".xml",
+      "text/xml": ".xml",
+      "text/plain": ".txt",
+      "text/html": ".html",
+      "text/csv": ".csv",
+      "application/json": ".json",
+      "application/xhtml+xml": ".xhtml",
+      "application/zip": ".zip",
+      "application/x-zip-compressed": ".zip",
+      "application/gzip": ".gz",
+      "application/x-gzip": ".gz",
+      "application/x-bzip2": ".bz2",
+      "application/x-7z-compressed": ".7z",
+      "application/x-rar-compressed": ".rar",
+      "application/x-tar": ".tar",
+      "application/x-xz": ".xz",
+      "application/x-lzip": ".lz",
+      "application/octet-stream": ".bin",
+      "image/jpeg": ".jpg",
+      "image/png": ".png",
+      "image/gif": ".gif",
+      "image/tiff": ".tiff",
+      "image/bmp": ".bmp",
+      "image/webp": ".webp",
+      "image/svg+xml": ".svg",
+      "image/x-icon": ".ico",
+      "audio/mpeg": ".mp3",
+      "audio/ogg": ".ogg",
+      "audio/flac": ".flac",
+      "audio/wav": ".wav",
+      "audio/aac": ".aac",
+      "video/mp4": ".mp4",
+      "video/x-msvideo": ".avi",
+      "video/x-matroska": ".mkv",
+      "video/quicktime": ".mov",
+      "video/x-ms-wmv": ".wmv",
+      "application/rtf": ".rtf",
+      "application/epub+zip": ".epub",
+      "application/java-archive": ".jar",
+      "application/x-sqlite3": ".sqlite",
+      "application/x-shockwave-flash": ".swf",
+      "application/wasm": ".wasm",
+      "image/vnd.dwg": ".dwg",
+      "application/acad": ".dwg",
+      "application/x-acad": ".dwg",
+      "model/vnd.dwf": ".dwf",
+      "application/x-dwf": ".dwf",
+      "image/vnd.dgn": ".dgn",
+      "application/vnd.dgn": ".dgn",
+      "image/jp2": ".jp2",
+      "image/jpx": ".jp2",
+      "video/mpeg": ".mpg",
+      "video/mpeg4": ".mpeg4",
+      "audio/mp4": ".m4a",
+      "audio/x-m4a": ".m4a",
+      "application/cms": ".cades",
+      "application/pkcs7-signature": ".p7s",
+      "application/x-pkcs7-signature": ".p7s",
+      "application/vnd.ms-xpsdocument": ".xps",
+      "application/oxps": ".xps"
+    };
+
+    const MAGIC_TABLE = [
+      [hex("%PDF"), ".pdf", "PDF document"],
+      [hex("89504E470D0A1A0A"), ".png", "PNG image"],
+      [hex("FFD8FF"), ".jpg", "JPEG image"],
+      [ascii("GIF87a"), ".gif", "GIF87 image"],
+      [ascii("GIF89a"), ".gif", "GIF89 image"],
+      [hex("49492A00"), ".tiff", "TIFF image (LE)"],
+      [hex("4D4D002A"), ".tiff", "TIFF image (BE)"],
+      [ascii("BM"), ".bmp", "BMP image"],
+      [ascii("RIFF"), ".webp", "WebP image (RIFF)"],
+      [hex("00000100"), ".ico", "ICO icon"],
+      [ascii("8BPS"), ".psd", "Photoshop PSD"],
+      [ascii("fLaC"), ".flac", "FLAC audio"],
+      [ascii("OggS"), ".ogg", "Ogg container"], 
+      [ascii("ID3"), ".mp3", "MP3 audio (ID3)"],
+      [hex("FFFB"), ".mp3", "MP3 audio"],
+      [hex("FFF3"), ".mp3", "MP3 audio"],
+      [hex("FFF2"), ".mp3", "MP3 audio"],
+      [hex("1A45DFA3"), ".mkv", "Matroska/MKV"],
+      [hex("00000018667479706D703432"), ".mp4", "MP4 video"],
+      [hex("000000186674797069736F6D"), ".mp4", "MP4 video"],
+      [hex("504B0304"), ".zip", "ZIP archive"],
+      [hex("1F8B"), ".gz", "GZIP compressed"],
+      [ascii("BZh"), ".bz2", "BZIP2 compressed"],
+      [hex("377ABCAF271C"), ".7z", "7-Zip archive"],
+      [hex("526172211A0700"), ".rar", "RAR v4"],
+      [hex("526172211A070100"), ".rar", "RAR v5"],
+      [hex("FD377A585A00"), ".xz", "XZ compressed"],
+      [ascii("LZIP"), ".lz", "LZIP compressed"],
+      [hex("D0CF11E0A1B11AE1"), ".doc", "MS Office legacy (OLE2)"],
+      [ascii("{\\rtf"), ".rtf", "Rich Text Format"],
+      [hex("7F454C46"), ".elf", "ELF executable"],
+      [ascii("MZ"), ".exe", "PE executable"],
+      [hex("FEEDFACE"), ".macho", "Mach-O binary (32-bit)"],
+      [hex("FEEDFACF"), ".macho", "Mach-O binary (64-bit)"],
+      [hex("CAFEBABE"), ".macho", "Mach-O fat binary or Java class"],
+      [ascii("SQLite format 3\0"), ".sqlite", "SQLite database"],
+      [ascii("CWS"), ".swf", "Flash SWF (compressed)"],
+      [ascii("FWS"), ".swf", "Flash SWF"],
+      [hex("0061736D"), ".wasm", "WebAssembly binary"],
+      [hex("0000000C6A502020"), ".jp2",  "JPEG 2000 JP2"],
+      [ascii("AC10"),           ".dwg",  "AutoCAD DWG"],
+      [ascii("(DWF"),           ".dwf",  "Autodesk DWF"],
+      [hex("000001BA"),         ".mpg",  "MPEG-PS video"],
+      [hex("000001B3"),         ".mpg",  "MPEG video stream"]
+    ];
+
+    const OLE2_MAGIC = hex("D0CF11E0A1B11AE1");
+    const OOXML_PATTERNS = [
+      ["wordprocessingml.document.main", ".docx"],
+      ["spreadsheetml.sheet.main", ".xlsx"],
+      ["presentationml.presentation.main", ".pptx"],
+      ["wordprocessingml.template", ".dotx"],
+      ["spreadsheetml.template", ".xltx"],
+      ["presentationml.template", ".potx"],
+      ["presentationml.slideshow", ".ppsx"],
+      ["drawingml.chartshapes", ".xlsx"]
+    ];
+    const ODF_MIMETYPES = {
+      "application/vnd.oasis.opendocument.text": ".odt",
+      "application/vnd.oasis.opendocument.spreadsheet": ".ods",
+      "application/vnd.oasis.opendocument.presentation": ".odp",
+      "application/vnd.oasis.opendocument.graphics": ".odg",
+      "application/vnd.oasis.opendocument.chart": ".odc",
+      "application/vnd.oasis.opendocument.formula": ".odf",
+      "application/vnd.oasis.opendocument.database": ".odb",
+      "application/vnd.oasis.opendocument.text-template": ".ott",
+      "application/vnd.oasis.opendocument.spreadsheet-template": ".ots",
+      "application/vnd.oasis.opendocument.presentation-template": ".otp"
+    };
+    const XML_NS_MAP = {
+      "http://www.w3.org/2000/svg": ".svg",
+      "http://www.w3.org/1999/xhtml": ".xhtml",
+      "http://www.w3.org/2005/Atom": ".atom",
+      "http://purl.org/rss/1.0/": ".rss",
+      "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2": ".xml",
+      "urn:oasis:names:specification:ubl:schema:xsd:CreditNote-2": ".xml",
+      "urn:oasis:names:tc:opendocument:xmlns:office:1.0": ".odt",
+      "http://schemas.openxmlformats.org/spreadsheetml/2006/main": ".xlsx",
+      "http://schemas.openxmlformats.org/wordprocessingml/2006/main": ".docx"
+    };
+    const XML_ROOT_TAG_MAP = {
+      "html": ".html",
+      "HTML": ".html",
+      "svg": ".svg",
+      "rss": ".rss",
+      "feed": ".atom",
+      "Invoice": ".xml",
+      "CreditNote": ".xml",
+      "root": ".xml"
+    };
+
+    const state = {
+      file: null,
+      extracted: []
+    };
+
+    const fileInput = document.getElementById("fileInput");
+    const extractBtn = document.getElementById("extractBtn");
+    const downloadAllBtn = document.getElementById("downloadAllBtn");
+    const statusEl = document.getElementById("status");
+    const resultsEl = document.getElementById("results");
+
+    fileInput.addEventListener("change", () => {
+      state.file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+      state.extracted = [];
+      renderResults();
+      extractBtn.disabled = !state.file;
+      downloadAllBtn.disabled = true;
+      setStatus(state.file ? `Wybrano: ${state.file.name}` : "Wybierz plik, aby rozpocząć.");
+    });
+
+    const MAX_FILE_BYTES  = 100 * 1024 * 1024;   // 100 MB
+    const MAX_OBJECTS     = 100;
+
+    extractBtn.addEventListener("click", async () => {
+      if (!state.file) return;
+      extractBtn.disabled = true;
+      downloadAllBtn.disabled = true;
+      setStatus(`Przetwarzanie pliku ${state.file.name}...`);
+      try {
+        if (state.file.size > MAX_FILE_BYTES)
+          throw new Error(`Plik za duży (${(state.file.size / 1048576).toFixed(1)} MB). Maksymalny rozmiar: 50 MB.`);
+        const xmlText = await state.file.text();
+        const baseStem = removeFileExtension(state.file.name);
+        const extracted = extractFromXades(xmlText, baseStem);
+        state.extracted = extracted;
+        if (extracted.length === 0) {
+          setStatus("[!] Nic nie wyodrębniono.\nNie znaleziono danych w ds:Object albo wszystkie elementy były puste.");
+        } else {
+          setStatus(`[OK] Wyodrębniono pliki: ${extracted.length}.\nKliknij „Pobierz” przy wybranym pliku albo „Pobierz wszystko”.`);
+        }
+        renderResults();
+        downloadAllBtn.disabled = extracted.length === 0;
+      } catch (err) {
+        console.error(err);
+        setStatus(`[BŁĄD] ${err && err.message ? err.message : "Nie udało się odczytać pliku."}`);
+        state.extracted = [];
+        renderResults();
+      } finally {
+        extractBtn.disabled = !state.file;
+        if (!state.extracted.length) downloadAllBtn.disabled = true;
+      }
+    });
+
+    downloadAllBtn.addEventListener("click", async () => {
+      if (!state.extracted.length) return;
+      for (const item of state.extracted) {
+        triggerDownload(item.blob, item.filename);
+        await sleep(120);
+      }
+    });
+
+    function extractFromXades(xmlText, baseStem) {
+      const dom = new DOMParser().parseFromString(xmlText, "application/xml");
+      const parseError = dom.querySelector("parsererror");
+      if (parseError) {
+        throw new Error("Input is not valid XML.");
+      }
+
+      const objects = Array.from(dom.getElementsByTagNameNS(NS_DS, "Object"));
+      const payloadObjects = objects.filter((obj) => !isQualifyingProperties(obj));
+      const output = [];
+
+      if (!payloadObjects.length) return output;
+      if (payloadObjects.length > MAX_OBJECTS)
+        throw new Error(`Zbyt wiele obiektów ds:Object (${payloadObjects.length}). Limit: ${MAX_OBJECTS}.`);
+
+      const count = payloadObjects.length;
+      payloadObjects.forEach((obj, idx) => {
+        const objId = obj.getAttribute("Id") || obj.getAttribute("id") || `object${idx + 1}`;
+        let mimeHint = obj.getAttribute("MimeType") || obj.getAttribute("mimeType");
+        const encoding = obj.getAttribute("Encoding") || obj.getAttribute("encoding") || "";
+        const suffix = count > 1 ? `_${idx + 1}` : "";
+
+        const rawText = getTextDirect(obj).trim();
+        const elementChildren = Array.from(obj.childNodes).filter((n) => n.nodeType === Node.ELEMENT_NODE);
+        const isBase64Declared = encoding.toLowerCase().includes("base64") || encoding.includes(`${NS_DS}base64`);
+
+        if (isBase64Declared && rawText) {
+          try {
+            const bytes = decodeBase64Bytes(rawText);
+            mimeHint = mimeHint || getDataObjectFormatMime(dom);
+            output.push(buildExtracted(baseStem, suffix, objId, bytes, mimeHint, false));
+          } catch {
+            // Declared as Base64 but decoding failed — preserve raw text
+            const bytes = new TextEncoder().encode(rawText);
+            output.push(buildExtracted(baseStem, suffix, objId, bytes, mimeHint || "text/plain", false));
+          }
+          return;
+        }
+
+        if (elementChildren.length) {
+          const content = serializeChildren(elementChildren);
+          mimeHint = mimeHint || getDataObjectFormatMime(dom);
+          output.push(buildExtracted(baseStem, suffix, objId, content, mimeHint, false));
+          return;
+        }
+
+        if (rawText) {
+          const auto = maybeDecodeBase64(rawText);
+          if (auto) {
+            mimeHint = mimeHint || getDataObjectFormatMime(dom);
+            output.push(buildExtracted(baseStem, suffix, objId, auto, mimeHint, true));
+            return;
+          }
+          const content = new TextEncoder().encode(rawText);
+          mimeHint = mimeHint || getDataObjectFormatMime(dom);
+          output.push(buildExtracted(baseStem, suffix, objId, content, mimeHint, false));
+          return;
+        }
+      });
+
+      return output;
+    }
+
+    function buildExtracted(baseStem, suffix, objId, bytes, mimeHint, autoBase64) {
+      const result = detectExtension(bytes, mimeHint);
+      const method = autoBase64 ? `auto-base64 + ${result.method}` : result.method;
+      const filename = `${baseStem}${suffix}${result.ext}`;
+      return {
+        objId,
+        filename,
+        bytes,
+        blob: new Blob([bytes]),
+        size: bytes.byteLength,
+        method
+      };
+    }
+
+    function detectExtension(bytes, mimeHint) {
+      if (mimeHint) {
+        const clean = mimeHint.trim().split(";")[0].trim().toLowerCase();
+        if (clean && clean !== "application/octet-stream" && clean !== "binary/octet-stream") {
+          if (MIME_TO_EXT[clean]) {
+            let ext = MIME_TO_EXT[clean];
+            if (ext === ".zip" && hasPrefix(bytes, hex("504B"))) {
+              ext = inspectZip(bytes);
+            }
+            return { ext, method: `MIME hint: ${clean}` };
+          }
+          const stdExt = mimeToStdExt(clean);
+          if (stdExt) return { ext: stdExt, method: `MIME hint (map): ${clean}` };
+        }
+      }
+
+      for (const [magic, ext, desc] of MAGIC_TABLE) {
+        if (hasPrefix(bytes, magic)) {
+          if (ext === ".zip") return { ext: inspectZip(bytes), method: `ZIP container -> ${desc}` };
+          if (ext === ".doc") return { ext: inspectOle2(bytes), method: `OLE2 container -> ${desc}` };
+          if (bytesEqual(magic, ascii("RIFF"))) return { ext: inspectRiff(bytes), method: `RIFF container -> ${desc}` };
+          if (ext === ".bmp") return { ext: inspectBmp(bytes), method: `BMP image (validated)` };
+          return { ext, method: desc };
+        }
+      }
+
+      if (looksUtf8(bytes.slice(0, 256))) return { ext: detectText(bytes), method: "text content analysis" };
+
+      // --- Added: M4A (ftyp brand at offset 4) ---
+      if (bytes.byteLength >= 12 &&
+          bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70 &&
+          bytes[8] === 0x4D && bytes[9] === 0x34 && bytes[10] === 0x41 && bytes[11] === 0x20) {
+        return { ext: ".m4a", method: "M4A audio (ftyp M4A brand)" };
+      }
+
+      // --- Added: CAdES – ASN.1 DER ContentInfo wrapping id-signedData OID ---
+      if (bytes.byteLength >= 15 && bytes[0] === 0x30) {
+        let pos = 1;
+        const lb = bytes[pos];
+        if (lb === 0x82) pos += 3; else if (lb === 0x81) pos += 2; else pos += 1;
+        if (bytes[pos]   === 0x06 && bytes[pos+1]  === 0x09 &&
+            bytes[pos+2] === 0x2A && bytes[pos+3]  === 0x86 && bytes[pos+4]  === 0x48 &&
+            bytes[pos+5] === 0x86 && bytes[pos+6]  === 0xF7 && bytes[pos+7]  === 0x0D &&
+            bytes[pos+8] === 0x01 && bytes[pos+9]  === 0x07 && bytes[pos+10] === 0x02) {
+          return { ext: ".cades", method: "CAdES/CMS SignedData (ASN.1 DER)" };
+        }
+      }
+
+      return { ext: ".bin", method: "unknown binary" };
+    }
+
+    function detectText(bytes) {
+      let view = bytes;
+      if (hasPrefix(view, hex("EFBBBF"))) view = view.slice(3);
+      else if (hasPrefix(view, hex("FFFE"))) view = utf16ToUtf8Bytes(view, true);
+      else if (hasPrefix(view, hex("FEFF"))) view = utf16ToUtf8Bytes(view, false);
+
+      let text;
+      try {
+        text = new TextDecoder("utf-8", { fatal: false }).decode(view.slice(0, 4096)).trim();
+      } catch {
+        return ".bin";
+      }
+
+      if (/^<!doctype\s+html/i.test(text) || text.toLowerCase().startsWith("<html")) return ".html";
+      if (text.startsWith("<?xml") || (text.startsWith("<") && !text.startsWith("<!"))) return inspectXml(view);
+      if (text.startsWith("{") || text.startsWith("[")) {
+        try {
+          JSON.parse(new TextDecoder().decode(view));
+          return ".json";
+        } catch {}
+      }
+      if (/^\s*\[[\w\s]+\]/m.test(text)) return ".ini";
+
+      const lines = text.split(/\r?\n/).slice(0, 10).filter((l) => l.trim().length);
+      if (lines.length >= 3) {
+        for (const delim of [",", ";", "\t", "|"]) {
+          const counts = lines.map((l) => l.split(delim).length - 1);
+          if (counts.length >= 3 && Math.min(...counts) > 0 && (Math.max(...counts) - Math.min(...counts) <= 2)) {
+            return ".csv";
+          }
+        }
+      }
+      return ".txt";
+    }
+
+    function inspectXml(bytes) {
+      try {
+        const text = new TextDecoder().decode(bytes.slice(0, 8192));
+        const dom = new DOMParser().parseFromString(text, "application/xml");
+        const root = dom.documentElement;
+        if (!root) return ".xml";
+        const ns = root.namespaceURI || "";
+        const local = root.localName || root.nodeName;
+        if (XML_NS_MAP[ns]) return XML_NS_MAP[ns];
+        if (XML_ROOT_TAG_MAP[local]) return XML_ROOT_TAG_MAP[local];
+      } catch {}
+      return ".xml";
+    }
+
+    function inspectRiff(bytes) {
+      if (bytes.byteLength >= 12) {
+        const tag = new TextDecoder().decode(bytes.slice(8, 12));
+        if (tag === "WAVE") return ".wav";
+        if (tag === "WEBP") return ".webp";
+        if (tag === "AVI ") return ".avi";
+      }
+      return ".riff";
+    }
+
+    function inspectBmp(bytes) {
+      // Valid BMP: reserved bytes at offsets 6–9 must all be zero
+      if (bytes.byteLength >= 10 &&
+          bytes[6] === 0 && bytes[7] === 0 && bytes[8] === 0 && bytes[9] === 0) {
+        return ".bmp";
+      }
+      return ".bin";   // "BM" matched but reserved bytes invalid — not a real BMP
+    }
+
+    function inspectOle2(bytes) {
+      const sample = new TextDecoder("utf-16le", { fatal: false }).decode(bytes.slice(0, 4096));
+      if (sample.includes("Workbook")) return ".xls";
+      if (sample.includes("PowerPoint")) return ".ppt";
+      if (sample.includes("WordDocument")) return ".doc";
+      if (sample.includes("Visio")) return ".vsd";
+      if (sample.includes("Access")) return ".mdb";
+      return ".doc";
+    }
+
+    function inspectZip(bytes) {
+      try {
+        const text = new TextDecoder("latin1", { fatal: false }).decode(bytes.slice(0, Math.min(bytes.byteLength, 120000)));
+        if (text.includes("mimetypeapplication/vnd.oasis.opendocument")) {
+          for (const [mime, ext] of Object.entries(ODF_MIMETYPES)) {
+            if (text.includes(mime)) return ext;
+          }
+        }
+        if (text.includes("META-INF/container.xml")) return ".epub";
+        if (text.includes("[Content_Types].xml")) {
+          if (text.includes("FixedDocumentSequence") ||
+              text.includes("application/vnd.ms-package.xps") ||
+              text.includes("application/oxps")) return ".xps";
+          for (const [pattern, ext] of OOXML_PATTERNS) if (text.includes(pattern)) return ext;
+          return ".docx";
+        }
+        if (text.includes("META-INF/MANIFEST.MF")) {
+          if (text.includes("AndroidManifest.xml")) return ".apk";
+          return ".jar";
+        }
+        if (text.includes("install.rdf") || text.includes("install.js")) return ".xpi";
+      } catch {}
+      return ".zip";
+    }
+
+    function isQualifyingProperties(obj) {
+      for (const ns of XADES_NS_LIST) {
+        if (obj.getElementsByTagNameNS(ns, "QualifyingProperties").length > 0) return true;
+      }
+      return false;
+    }
+
+    function getDataObjectFormatMime(doc) {
+      for (const ns of XADES_NS_LIST) {
+        const dofs = doc.getElementsByTagNameNS(ns, "DataObjectFormat");
+        for (const dof of dofs) {
+          const mimeEls = dof.getElementsByTagNameNS(ns, "MimeType");
+          if (mimeEls.length && mimeEls[0].textContent && mimeEls[0].textContent.trim()) {
+            return mimeEls[0].textContent.trim();
+          }
+        }
+      }
+      return null;
+    }
+
+    function getTextDirect(el) {
+      let out = "";
+      for (const node of el.childNodes) {
+        if (node.nodeType === Node.TEXT_NODE || node.nodeType === Node.CDATA_SECTION_NODE) {
+          out += node.textContent || "";
+        }
+      }
+      return out;
+    }
+
+    function serializeChildren(children) {
+      const serializer = new XMLSerializer();
+      let joined = "";
+      for (const child of children) joined += serializer.serializeToString(child) + "\n";
+      return new TextEncoder().encode(joined);
+    }
+
+    function maybeDecodeBase64(text) {
+      const clean = text.replace(/\s/g, "");
+      if (clean.length < 64) return null;           // too short to be a real file
+      if (clean.length % 4 !== 0) return null;
+      if (!/^[A-Za-z0-9+/=]+$/.test(clean)) return null;
+      try {
+        return decodeBase64Bytes(clean);
+      } catch {
+        return null;
+      }
+    }
+
+    function decodeBase64Bytes(b64) {
+      const clean = b64.replace(/\s/g, "");
+      const bin = atob(clean);
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+      return out;
+    }
+
+    function triggerDownload(blob, filename) {
+      const a = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function renderResults() {
+      if (!state.extracted.length) {
+        resultsEl.hidden = true;
+        resultsEl.innerHTML = "";
+        return;
+      }
+      resultsEl.hidden = false;
+      const rows = state.extracted.map((item, idx) => {
+        return `
+          <tr>
+            <td><span class="pill">${escapeHtml(item.objId)}</span></td>
+            <td><code>${escapeHtml(item.filename)}</code><div class="small">${item.size.toLocaleString()} bytes</div></td>
+            <td>${escapeHtml(item.method)}</td>
+            <td><button data-idx="${idx}" class="dl-btn">Pobierz</button></td>
+          </tr>
+        `;
+      }).join("");
+      resultsEl.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>Obiekt</th>
+              <th>Plik wyjściowy</th>
+              <th>Metoda rozpoznania</th>
+              <th>Akcja</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+      for (const btn of resultsEl.querySelectorAll(".dl-btn")) {
+        btn.addEventListener("click", (e) => {
+          const idx = Number(e.currentTarget.getAttribute("data-idx"));
+          const item = state.extracted[idx];
+          if (item) triggerDownload(item.blob, item.filename);
+        });
+      }
+    }
+
+    function setStatus(msg) {
+      statusEl.textContent = msg;
+    }
+
+    function removeFileExtension(name) {
+      const i = name.lastIndexOf(".");
+      return i <= 0 ? name : name.slice(0, i);
+    }
+
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/[&<>"']/g, (ch) => (
+        ch === "&" ? "&amp;" :
+        ch === "<" ? "&lt;" :
+        ch === ">" ? "&gt;" :
+        ch === '"' ? "&quot;" : "&#39;"
+      ));
+    }
+
+    function mimeToStdExt(mime) {
+      const map = {
+        "application/javascript": ".js",
+        "text/javascript": ".js",
+        "application/x-7z-compressed": ".7z",
+        "application/x-rar-compressed": ".rar",
+        "application/x-tar": ".tar",
+        "application/gzip": ".gz",
+        "text/markdown": ".md"
+      };
+      return map[mime] || null;
+    }
+
+    function utf16ToUtf8Bytes(bytes, littleEndian) {
+      try {
+        const decoder = new TextDecoder(littleEndian ? "utf-16le" : "utf-16be", { fatal: false });
+        const text = decoder.decode(bytes);
+        return new TextEncoder().encode(text);
+      } catch {
+        return bytes;
+      }
+    }
+
+    function looksUtf8(bytes) {
+      try {
+        new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    function hex(hexString) {
+      if (hexString.startsWith("%")) return ascii(hexString);
+      const clean = hexString.replace(/[^0-9A-Fa-f]/g, "");
+      const out = new Uint8Array(clean.length / 2);
+      for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+      return out;
+    }
+
+    function ascii(text) {
+      const out = new Uint8Array(text.length);
+      for (let i = 0; i < text.length; i++) out[i] = text.charCodeAt(i) & 0xff;
+      return out;
+    }
+
+    function hasPrefix(bytes, prefix) {
+      if (bytes.byteLength < prefix.byteLength) return false;
+      for (let i = 0; i < prefix.byteLength; i++) {
+        if (bytes[i] !== prefix[i]) return false;
+      }
+      return true;
+    }
+
+    function bytesEqual(a, b) {
+      if (a.byteLength !== b.byteLength) return false;
+      for (let i = 0; i < a.byteLength; i++) if (a[i] !== b[i]) return false;
+      return true;
+    }
+  </script>
+</body>
+</html>
