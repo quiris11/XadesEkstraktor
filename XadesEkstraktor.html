@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; object-src 'none';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-L8LWpo6YDCxjmr1NOebVl0n2HnVWu9UWWZN+lJ/Z06w='; style-src 'sha256-Byx82OeEYNLlnavcjUOq9ON9ioDfLkpulE9VNfe9kxk='; img-src blob: data:; connect-src 'none'; object-src 'none';">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Ekstraktor załączników z plików podpisanych otaczającym XAdES</title>
   <style>
@@ -27,6 +27,11 @@
         radial-gradient(circle at 90% 85%, #e9f5ee 0%, transparent 40%),
         var(--bg);
       min-height: 100vh;
+    }
+    code {
+      word-wrap: break-word;
+      display:block;
+      max-width: 300px
     }
     .wrap {
       max-width: 980px;
@@ -166,7 +171,6 @@
         <div class="row">
           <input id="fileInput" type="file" accept=".xml,.xades,text/xml,application/xml">
           <button id="extractBtn" disabled>Wyodrębnij</button>
-          <button id="downloadAllBtn" disabled>Pobierz wszystko</button>
         </div>
         <div class="warn-banner">
           Nie otwieraj wyodrębnionych plików z niezaufanych źródeł &mdash; mogą zawierać złośliwy kod (.html, .svg, .js, .exe, .wasm).
@@ -355,64 +359,50 @@
 
     const state = {
       file: null,
-      extracted: []
+      extracted: null
     };
 
     const fileInput = document.getElementById("fileInput");
     const extractBtn = document.getElementById("extractBtn");
-    const downloadAllBtn = document.getElementById("downloadAllBtn");
     const statusEl = document.getElementById("status");
     const resultsEl = document.getElementById("results");
 
     fileInput.addEventListener("change", () => {
       state.file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
-      state.extracted = [];
+      state.extracted = null;
       renderResults();
       extractBtn.disabled = !state.file;
-      downloadAllBtn.disabled = true;
       setStatus(state.file ? `Wybrano: ${state.file.name}` : "Wybierz plik, aby rozpocząć.");
     });
 
     const MAX_FILE_BYTES  = 100 * 1024 * 1024;   // 100 MB
-    const MAX_OBJECTS     = 100;
-
     extractBtn.addEventListener("click", async () => {
       if (!state.file) return;
       extractBtn.disabled = true;
-      downloadAllBtn.disabled = true;
       setStatus(`Przetwarzanie pliku ${state.file.name}...`);
       try {
         if (state.file.size > MAX_FILE_BYTES)
           throw new Error(`Plik za duży (${(state.file.size / 1048576).toFixed(1)} MB). Maksymalny rozmiar: 50 MB.`);
         const xmlText = await state.file.text();
         const baseStem = removeFileExtension(state.file.name);
-        const extracted = extractFromXades(xmlText, baseStem);
-        state.extracted = extracted;
-        if (extracted.length === 0) {
-          setStatus("[!] Nic nie wyodrębniono.\nNie znaleziono danych w ds:Object albo wszystkie elementy były puste.");
+        const item = extractFromXades(xmlText, baseStem);
+        state.extracted = item;
+        if (!item) {
+          setStatus("[!] Nic nie wyodrębniono.\nNie znaleziono danych w ds:Object albo element był pusty.");
         } else {
-          setStatus(`[OK] Wyodrębniono pliki: ${extracted.length}.\nKliknij „Pobierz” przy wybranym pliku albo „Pobierz wszystko”.`);
+          setStatus(`[OK] Wyodrębniono: ${item.filename} (${item.size.toLocaleString()} B)`);
         }
         renderResults();
-        downloadAllBtn.disabled = extracted.length === 0;
       } catch (err) {
         console.error(err);
         setStatus(`[BŁĄD] ${err && err.message ? err.message : "Nie udało się odczytać pliku."}`);
-        state.extracted = [];
+        state.extracted = null;
         renderResults();
       } finally {
         extractBtn.disabled = !state.file;
-        if (!state.extracted.length) downloadAllBtn.disabled = true;
       }
     });
 
-    downloadAllBtn.addEventListener("click", async () => {
-      if (!state.extracted.length) return;
-      for (const item of state.extracted) {
-        triggerDownload(item.blob, item.filename);
-        await sleep(120);
-      }
-    });
 
     function extractFromXades(xmlText, baseStem) {
       const dom = new DOMParser().parseFromString(xmlText, "application/xml");
@@ -423,64 +413,52 @@
 
       const objects = Array.from(dom.getElementsByTagNameNS(NS_DS, "Object"));
       const payloadObjects = objects.filter((obj) => !isQualifyingProperties(obj));
-      const output = [];
+      if (!payloadObjects.length) return null;
 
-      if (!payloadObjects.length) return output;
-      if (payloadObjects.length > MAX_OBJECTS)
-        throw new Error(`Zbyt wiele obiektów ds:Object (${payloadObjects.length}). Limit: ${MAX_OBJECTS}.`);
+      const obj     = payloadObjects[0];
+      const objId   = obj.getAttribute("Id") || obj.getAttribute("id") || "object1";
+      let mimeHint  = obj.getAttribute("MimeType") || obj.getAttribute("mimeType");
+      const encoding = obj.getAttribute("Encoding") || obj.getAttribute("encoding") || "";
 
-      const count = payloadObjects.length;
-      payloadObjects.forEach((obj, idx) => {
-        const objId = obj.getAttribute("Id") || obj.getAttribute("id") || `object${idx + 1}`;
-        let mimeHint = obj.getAttribute("MimeType") || obj.getAttribute("mimeType");
-        const encoding = obj.getAttribute("Encoding") || obj.getAttribute("encoding") || "";
-        const suffix = count > 1 ? `_${idx + 1}` : "";
+      const rawText          = getTextDirect(obj).trim();
+      const elementChildren  = Array.from(obj.childNodes).filter((n) => n.nodeType === Node.ELEMENT_NODE);
+      const isBase64Declared = encoding.toLowerCase().includes("base64") || encoding.includes(`${NS_DS}base64`);
 
-        const rawText = getTextDirect(obj).trim();
-        const elementChildren = Array.from(obj.childNodes).filter((n) => n.nodeType === Node.ELEMENT_NODE);
-        const isBase64Declared = encoding.toLowerCase().includes("base64") || encoding.includes(`${NS_DS}base64`);
-
-        if (isBase64Declared && rawText) {
-          try {
-            const bytes = decodeBase64Bytes(rawText);
-            mimeHint = mimeHint || getDataObjectFormatMime(dom);
-            output.push(buildExtracted(baseStem, suffix, objId, bytes, mimeHint, false));
-          } catch {
-            // Declared as Base64 but decoding failed — preserve raw text
-            const bytes = new TextEncoder().encode(rawText);
-            output.push(buildExtracted(baseStem, suffix, objId, bytes, mimeHint || "text/plain", false));
-          }
-          return;
-        }
-
-        if (elementChildren.length) {
-          const content = serializeChildren(elementChildren);
+      if (isBase64Declared && rawText) {
+        try {
+          const bytes = decodeBase64Bytes(rawText);
           mimeHint = mimeHint || getDataObjectFormatMime(dom);
-          output.push(buildExtracted(baseStem, suffix, objId, content, mimeHint, false));
-          return;
+          return buildExtracted(baseStem, objId, bytes, mimeHint, false);
+        } catch {
+          const bytes = new TextEncoder().encode(rawText);
+          return buildExtracted(baseStem, objId, bytes, mimeHint || "text/plain", false);
         }
+      }
 
-        if (rawText) {
-          const auto = maybeDecodeBase64(rawText);
-          if (auto) {
-            mimeHint = mimeHint || getDataObjectFormatMime(dom);
-            output.push(buildExtracted(baseStem, suffix, objId, auto, mimeHint, true));
-            return;
-          }
-          const content = new TextEncoder().encode(rawText);
+      if (elementChildren.length) {
+        const content = serializeChildren(elementChildren);
+        mimeHint = mimeHint || getDataObjectFormatMime(dom);
+        return buildExtracted(baseStem, objId, content, mimeHint, false);
+      }
+
+      if (rawText) {
+        const auto = maybeDecodeBase64(rawText);
+        if (auto) {
           mimeHint = mimeHint || getDataObjectFormatMime(dom);
-          output.push(buildExtracted(baseStem, suffix, objId, content, mimeHint, false));
-          return;
+          return buildExtracted(baseStem, objId, auto, mimeHint, true);
         }
-      });
+        const content = new TextEncoder().encode(rawText);
+        mimeHint = mimeHint || getDataObjectFormatMime(dom);
+        return buildExtracted(baseStem, objId, content, mimeHint, false);
+      }
 
-      return output;
+      return null;
     }
 
-    function buildExtracted(baseStem, suffix, objId, bytes, mimeHint, autoBase64) {
+    function buildExtracted(baseStem, objId, bytes, mimeHint, autoBase64) {
       const result = detectExtension(bytes, mimeHint);
       const method = autoBase64 ? `auto-base64 + ${result.method}` : result.method;
-      const filename = `${baseStem}${suffix}${result.ext}`;
+      const filename = `${baseStem}${result.ext}`;
       return {
         objId,
         filename,
@@ -714,22 +692,13 @@
     }
 
     function renderResults() {
-      if (!state.extracted.length) {
+      const item = state.extracted;
+      if (!item) {
         resultsEl.hidden = true;
         resultsEl.innerHTML = "";
         return;
       }
       resultsEl.hidden = false;
-      const rows = state.extracted.map((item, idx) => {
-        return `
-          <tr>
-            <td><span class="pill">${escapeHtml(item.objId)}</span></td>
-            <td><code>${escapeHtml(item.filename)}</code><div class="small">${item.size.toLocaleString()} bytes</div></td>
-            <td>${escapeHtml(item.method)}</td>
-            <td><button data-idx="${idx}" class="dl-btn">Pobierz</button></td>
-          </tr>
-        `;
-      }).join("");
       resultsEl.innerHTML = `
         <table>
           <thead>
@@ -740,16 +709,19 @@
               <th>Akcja</th>
             </tr>
           </thead>
-          <tbody>${rows}</tbody>
+          <tbody>
+            <tr>
+              <td><span class="pill">${escapeHtml(item.objId)}</span></td>
+              <td><code>${escapeHtml(item.filename)}</code><div class="small">${item.size.toLocaleString()} bytes</div></td>
+              <td>${escapeHtml(item.method)}</td>
+              <td><button class="dl-btn">Pobierz</button></td>
+            </tr>
+          </tbody>
         </table>
       `;
-      for (const btn of resultsEl.querySelectorAll(".dl-btn")) {
-        btn.addEventListener("click", (e) => {
-          const idx = Number(e.currentTarget.getAttribute("data-idx"));
-          const item = state.extracted[idx];
-          if (item) triggerDownload(item.blob, item.filename);
-        });
-      }
+      resultsEl.querySelector(".dl-btn").addEventListener("click", () => {
+        triggerDownload(item.blob, item.filename);
+      });
     }
 
     function setStatus(msg) {
@@ -761,9 +733,6 @@
       return i <= 0 ? name : name.slice(0, i);
     }
 
-    function sleep(ms) {
-      return new Promise((resolve) => setTimeout(resolve, ms));
-    }
 
     function escapeHtml(s) {
       return s.replace(/[&<>"']/g, (ch) => (
