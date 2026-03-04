@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-L8LWpo6YDCxjmr1NOebVl0n2HnVWu9UWWZN+lJ/Z06w='; style-src 'sha256-Byx82OeEYNLlnavcjUOq9ON9ioDfLkpulE9VNfe9kxk='; img-src blob: data:; connect-src 'none'; object-src 'none';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-uJJHhVHmUi1D8TA0kVpLlnUG/MSH2rGp1sG1XCaotdg='; style-src 'sha256-Byx82OeEYNLlnavcjUOq9ON9ioDfLkpulE9VNfe9kxk='; img-src blob: data:; connect-src 'none'; object-src 'none';">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Ekstraktor załączników z plików podpisanych otaczającym XAdES</title>
   <style>
@@ -385,12 +385,16 @@
           throw new Error(`Plik za duży (${(state.file.size / 1048576).toFixed(1)} MB). Maksymalny rozmiar: 50 MB.`);
         const xmlText = await state.file.text();
         const baseStem = removeFileExtension(state.file.name);
-        const item = extractFromXades(xmlText, baseStem);
-        state.extracted = item;
-        if (!item) {
-          setStatus("[!] Nic nie wyodrębniono.\nNie znaleziono danych w ds:Object albo element był pusty.");
+        let xadesItem = null;
+        try { xadesItem = extractFromXades(xmlText, baseStem); } catch(e) { console.debug("Not XAdES:", e.message); }
+        let items = xadesItem ? [xadesItem] : extractFromCrdXml(xmlText);
+        state.extracted = items;
+        if (!items || !items.length) {
+          setStatus("[!] Nic nie wyodrębniono.\nNie znaleziono danych w ds:Object, str:Zalacznik albo element był pusty.");
+        } else if (items.length === 1) {
+          setStatus(`[OK] Wyodrębniono: ${items[0].filename} (${items[0].size.toLocaleString()} B)`);
         } else {
-          setStatus(`[OK] Wyodrębniono: ${item.filename} (${item.size.toLocaleString()} B)`);
+          setStatus(`[OK] Wyodrębniono ${items.length} pliki/plików: ${items.map(i => i.filename).join(", ")}`);
         }
         renderResults();
       } catch (err) {
@@ -403,6 +407,63 @@
       }
     });
 
+
+    function extractFromCrdXml(xmlText) {
+      const STR_NS = "http://crd.gov.pl/xml/schematy/struktura/2009/11/16/";
+      const dom = new DOMParser().parseFromString(xmlText, "application/xml");
+      if (dom.querySelector("parsererror")) throw new Error("Input is not valid XML.");
+      const zalaczniki = Array.from(dom.getElementsByTagNameNS(STR_NS, "Zalacznik"));
+      if (!zalaczniki.length) return null;
+      const results = [];
+      for (const zal of zalaczniki) {
+        const nazwaPliku = (zal.getAttribute("nazwaPliku") || zal.getAttribute("NazwaPliku") || "zalacznik").split(/[\\/]/).pop().trim() || "zalacznik";
+        const kodowanie  = (zal.getAttribute("kodowanie") || zal.getAttribute("Kodowanie") || "").toLowerCase();
+        const daneEl     = zal.getElementsByTagNameNS(STR_NS, "DaneZalacznika")[0];
+        if (!daneEl) continue;
+        const rawText  = getTextDirect(daneEl).trim();
+        const isBase64 = kodowanie.includes("base64");
+        const bytes    = isBase64 ? decodeBase64Bytes(rawText) : new TextEncoder().encode(rawText);
+        const detected = detectExtension(bytes, guessMimeFromFilename(nazwaPliku));
+        results.push({
+          objId:    nazwaPliku,
+          filename: nazwaPliku,
+          bytes,
+          blob:     new Blob([bytes]),
+          size:     bytes.byteLength,
+          method:   isBase64 ? `base64 (CRD/ePUAP) → ${detected.method}` : "plain (CRD/ePUAP)"
+        });
+      }
+      return results.length ? results : null;
+    }
+
+    function guessMimeFromFilename(filename) {
+      const ext = filename.includes(".") ? "." + filename.split(".").pop().toLowerCase() : "";
+      const map = {
+        ".pdf": "application/pdf", ".txt": "text/plain", ".xml": "application/xml",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ".odt": "application/vnd.oasis.opendocument.text",
+        ".ods": "application/vnd.oasis.opendocument.spreadsheet",
+        ".png": "image/png", ".jpg": "image/jpeg", ".gif": "image/gif",
+        ".zip": "application/zip", ".html": "text/html",
+        ".json": "application/json", ".csv": "text/csv",
+        ".rtf": "application/rtf", ".svg": "image/svg+xml",
+      };
+      return map[ext] || null;
+    }
+
+    function hasBase64Transform(dom, objId) {
+      const B64_TRANSFORM = "http://www.w3.org/2000/09/xmldsig#base64";
+      const refs = Array.from(dom.getElementsByTagNameNS(NS_DS, "Reference"));
+      for (const ref of refs) {
+        const uri = (ref.getAttribute("URI") || "").replace(/^#/, "");
+        if (uri !== objId) continue;
+        const transforms = Array.from(ref.getElementsByTagNameNS(NS_DS, "Transform"));
+        if (transforms.some(t => t.getAttribute("Algorithm") === B64_TRANSFORM)) return true;
+      }
+      return false;
+    }
 
     function extractFromXades(xmlText, baseStem) {
       const dom = new DOMParser().parseFromString(xmlText, "application/xml");
@@ -422,7 +483,7 @@
 
       const rawText          = getTextDirect(obj).trim();
       const elementChildren  = Array.from(obj.childNodes).filter((n) => n.nodeType === Node.ELEMENT_NODE);
-      const isBase64Declared = encoding.toLowerCase().includes("base64") || encoding.includes(`${NS_DS}base64`);
+      const isBase64Declared = encoding.toLowerCase().includes("base64") || encoding.includes(`${NS_DS}base64`) || hasBase64Transform(dom, objId);
 
       if (isBase64Declared && rawText) {
         try {
@@ -692,13 +753,20 @@
     }
 
     function renderResults() {
-      const item = state.extracted;
-      if (!item) {
+      const items = state.extracted;
+      if (!items || !items.length) {
         resultsEl.hidden = true;
         resultsEl.innerHTML = "";
         return;
       }
       resultsEl.hidden = false;
+      const rows = items.map((item, idx) => `
+            <tr>
+              <td><span class="pill">${escapeHtml(item.objId)}</span></td>
+              <td><code>${escapeHtml(item.filename)}</code><div class="small">${item.size.toLocaleString()} bytes</div></td>
+              <td>${escapeHtml(item.method)}</td>
+              <td><button class="dl-btn" data-idx="${idx}">Pobierz</button></td>
+            </tr>`).join("");
       resultsEl.innerHTML = `
         <table>
           <thead>
@@ -709,20 +777,16 @@
               <th>Akcja</th>
             </tr>
           </thead>
-          <tbody>
-            <tr>
-              <td><span class="pill">${escapeHtml(item.objId)}</span></td>
-              <td><code>${escapeHtml(item.filename)}</code><div class="small">${item.size.toLocaleString()} bytes</div></td>
-              <td>${escapeHtml(item.method)}</td>
-              <td><button class="dl-btn">Pobierz</button></td>
-            </tr>
-          </tbody>
-        </table>
-      `;
-      resultsEl.querySelector(".dl-btn").addEventListener("click", () => {
-        triggerDownload(item.blob, item.filename);
+          <tbody>${rows}</tbody>
+        </table>`;
+      resultsEl.querySelectorAll(".dl-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const i = parseInt(btn.getAttribute("data-idx"), 10);
+          triggerDownload(items[i].blob, items[i].filename);
+        });
       });
     }
+
 
     function setStatus(msg) {
       statusEl.textContent = msg;
